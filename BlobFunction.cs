@@ -11,31 +11,45 @@ public class BlobFunction
 {
     private readonly string _connectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
     private readonly string _containerName = Environment.GetEnvironmentVariable("ContainerName");
+    private readonly int outputMaxHeight = 150;
+    private readonly int outputMaxWidth = 150;
+    private readonly int inputMaxHeight = 1080;
+    private readonly int inputMaxWidth = 1920;
 
     [FunctionName("BlobFunction")]
-    public void Run([BlobTrigger("samples-workitems/{name}", Connection = "")]Stream myBlob, string name, ILogger log)
+    public void Run([BlobTrigger("drawings/{name}", Connection = "")] Stream myBlob, string name, ILogger log)
     {
-        log.LogInformation($"C# Blob trigger function Processed blob\n Name:{name} \n Size: {myBlob.Length} Bytes");
-        // compress
-        byte[] imageToCompress;
-        using (MemoryStream memoryStream = new MemoryStream())
-        {
-            myBlob.CopyTo(memoryStream);
-            var optimizer = new ImageOptimizer();
-            optimizer.Compress(memoryStream);
-            // optimizer.Compress(memoryStream);
-            imageToCompress = memoryStream.ToArray();
-            memoryStream.Position = 0;
-        }
-        
-        // rename blob
-        // drawing_123123-12312-wefwef-12332.jpg
         string[] fileNameWords = name.Split('.');
         string compressedFileName = $"{fileNameWords[0]}-compressed.{fileNameWords[1]}";
-        // create a new blob with name compressedFileName
-        // upload to another container
 
-        BlobClient blobClient = new(_connectionString, _containerName, compressedFileName);
-        blobClient.Upload(myBlob);
+        using (var output = new MemoryStream())
+        {
+            using (var image = new MagickImage(myBlob))
+            {
+                if (image.Width > inputMaxWidth || image.Height > inputMaxHeight)
+                {
+                    image.Resize(outputMaxWidth, outputMaxHeight);
+                    image.Write(output);
+                }
+                else
+                {
+                    myBlob.Position = 0;
+                    myBlob.CopyTo(output);
+                }
+            }
+
+            var optimizer = new ImageOptimizer
+            {
+                IgnoreUnsupportedFormats = true,
+            };
+
+            output.Position = 0;
+            optimizer.Compress(output);
+
+            BlobClient blobClient = new(_connectionString, _containerName, compressedFileName);
+
+            blobClient.Upload(output);
+        }
     }
+
 }
